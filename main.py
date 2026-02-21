@@ -24,7 +24,7 @@ class App(tk.Tk):
         super().__init__()
         self.title("Work Automation Tool")
         self.geometry("980x620")
-        self.minsize(900, 560)
+        self.minsize(600, 420)
 
         self.shared_state = {
             "last_file_path": "",
@@ -34,7 +34,7 @@ class App(tk.Tk):
 
         self._build_style()
 
-        self.container = ttk.Frame(self, padding=12)
+        self.container = ttk.Frame(self, padding=4)
         self.container.pack(fill="both", expand=True)
 
         self.current_page = None
@@ -43,9 +43,9 @@ class App(tk.Tk):
     def _build_style(self):
         style = ttk.Style(self)
         style.theme_use("clam")
-        style.configure("Title.TLabel", font=("Malgun Gothic", 16, "bold"))
-        style.configure("SubTitle.TLabel", font=("Malgun Gothic", 10))
-        style.configure("Menu.TButton", font=("Malgun Gothic", 11), padding=10)
+        style.configure("Title.TLabel", font=("Malgun Gothic", 13, "bold"))
+        style.configure("SubTitle.TLabel", font=("Malgun Gothic", 8))
+        style.configure("Menu.TButton", font=("Malgun Gothic", 9), padding=4)
 
     def _switch_page(self, page_cls, **kwargs):
         if self.current_page is not None:
@@ -55,9 +55,32 @@ class App(tk.Tk):
 
     def show_home(self):
         self._switch_page(HomePage)
+        self._apply_home_window_geometry()
 
     def show_feature(self, feature_key):
         self._switch_page(FeaturePage, feature_key=feature_key)
+        self._apply_feature_window_geometry(feature_key)
+
+    def _apply_home_window_geometry(self):
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        req_w = self.winfo_reqwidth()
+        req_h = self.winfo_reqheight()
+        target_w = min(max(req_w + 28, 620), int(screen_w * 0.58))
+        target_h = min(max(req_h + 36, 420), int(screen_h * 0.70))
+        self.geometry(f"{target_w}x{target_h}")
+
+    def _apply_feature_window_geometry(self, feature_key):
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        if feature_key == "feature_c":
+            target_w = min(max(int(screen_w * 0.76), 1100), 1420)
+            target_h = min(max(int(screen_h * 0.78), 760), 980)
+        else:
+            target_w = min(max(int(screen_w * 0.66), 920), 1120)
+            target_h = min(max(int(screen_h * 0.68), 620), 760)
+        self.geometry(f"{target_w}x{target_h}")
 
 
 class HomePage(ttk.Frame):
@@ -87,21 +110,21 @@ class HomePage(ttk.Frame):
 
     def _build_ui(self):
         header = ttk.Frame(self)
-        header.pack(fill="x", pady=(0, 12))
+        header.pack(fill="x", pady=(0, 2), anchor="n")
 
         ttk.Label(header, text="Work Automation Tool", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             header,
             text="Select a feature to run.",
             style="SubTitle.TLabel",
-        ).pack(anchor="w", pady=(4, 0))
+        ).pack(anchor="w", pady=(1, 0))
 
         body = ttk.Frame(self)
-        body.pack(fill="both", expand=True)
+        body.pack(fill="x", expand=False, anchor="n")
 
         for item in self.features:
-            card = ttk.Frame(body, padding=10)
-            card.pack(fill="x", pady=6)
+            card = ttk.Frame(body, padding=2)
+            card.pack(fill="x", pady=0)
 
             ttk.Button(
                 card,
@@ -110,7 +133,7 @@ class HomePage(ttk.Frame):
                 command=lambda key=item["key"]: self.app.show_feature(key),
             ).pack(side="left")
 
-            ttk.Label(card, text=item["desc"]).pack(side="left", padx=12)
+            ttk.Label(card, text=item["desc"]).pack(side="left", padx=4)
 
 
 class FeaturePage(ttk.Frame):
@@ -200,7 +223,6 @@ class FeaturePage(ttk.Frame):
             actions_row = ttk.Frame(input_frame)
             actions_row.pack(fill="x", pady=(0, 2))
             ttk.Button(actions_row, text="Apply Highlight", command=self._apply_feature_c_highlight).pack(side="left")
-            ttk.Button(actions_row, text="Clear Highlight", command=self._clear_feature_c_highlight).pack(side="left", padx=(6, 0))
             ttk.Button(actions_row, text="Copy Plot", command=self._copy_feature_c_plot_image).pack(side="left", padx=(12, 0))
             ttk.Button(actions_row, text="Copy Legend", command=self._copy_feature_c_legend_image).pack(side="left", padx=(6, 0))
             self.feature_c_toggle_loaded_btn = ttk.Button(
@@ -221,26 +243,27 @@ class FeaturePage(ttk.Frame):
             plot_frame = ttk.LabelFrame(main, text="Ball Map", padding=10)
             plot_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=(0, 8))
             plot_frame.rowconfigure(0, weight=1)
-            plot_frame.rowconfigure(1, weight=0)
-            plot_frame.columnconfigure(0, weight=1)
+            plot_frame.columnconfigure(0, weight=9)
+            plot_frame.columnconfigure(1, weight=3)
             self.feature_c_plot_host = ttk.Frame(plot_frame)
             self.feature_c_plot_host.grid(row=0, column=0, sticky="nsew")
             self.feature_c_legend_host = ttk.LabelFrame(plot_frame, text="Legend (Current Page)", padding=6)
-            self.feature_c_legend_host.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+            self.feature_c_legend_host.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
 
             if FEATURE_C_MPL_AVAILABLE:
                 fig = Figure(figsize=(10.2, 6.2), dpi=100)
                 self.feature_c_mpl_axes = fig.add_subplot(111)
+                fig.subplots_adjust(left=0.06, right=0.995, bottom=0.09, top=0.95)
                 self.feature_c_mpl_figure = fig
                 self.feature_c_mpl_canvas = FigureCanvasTkAgg(fig, master=self.feature_c_plot_host)
                 self.feature_c_mpl_canvas.get_tk_widget().pack(fill="both", expand=True)
 
-                legend_fig = Figure(figsize=(10.2, 1.8), dpi=100)
+                legend_fig = Figure(figsize=(2.8, 6.2), dpi=100)
                 self.feature_c_mpl_legend_axes = legend_fig.add_subplot(111)
                 self.feature_c_mpl_legend_axes.axis("off")
                 self.feature_c_mpl_legend_figure = legend_fig
                 self.feature_c_mpl_legend_canvas = FigureCanvasTkAgg(legend_fig, master=self.feature_c_legend_host)
-                self.feature_c_mpl_legend_canvas.get_tk_widget().pack(fill="x", expand=True)
+                self.feature_c_mpl_legend_canvas.get_tk_widget().pack(fill="both", expand=True)
             else:
                 ttk.Label(
                     self.feature_c_plot_host,
@@ -322,7 +345,9 @@ class FeaturePage(ttk.Frame):
 
         for col in show_df.columns:
             self.result_tree.heading(col, text=col)
-            self.result_tree.column(col, width=140, anchor="w", stretch=True)
+            stretch_col = False if self.feature_key == "feature_c" else True
+            width = 120 if self.feature_key == "feature_c" else 140
+            self.result_tree.column(col, width=width, anchor="w", stretch=stretch_col)
 
         for row in show_df.astype(str).itertuples(index=False, name=None):
             self.result_tree.insert("", "end", values=row)
@@ -734,6 +759,9 @@ class FeaturePage(ttk.Frame):
     def _toggle_feature_c_loaded_data(self):
         if self.feature_key != "feature_c" or self.feature_c_loaded_frame is None:
             return
+        root = self.winfo_toplevel()
+        keep_w = root.winfo_width()
+        keep_h = root.winfo_height()
         self.feature_c_loaded_visible = not self.feature_c_loaded_visible
         if self.feature_c_loaded_visible:
             self.feature_c_loaded_frame.grid()
@@ -743,6 +771,21 @@ class FeaturePage(ttk.Frame):
             self.feature_c_loaded_frame.grid_remove()
             if self.feature_c_toggle_loaded_btn is not None:
                 self.feature_c_toggle_loaded_btn.configure(text="Show Loaded Data")
+        self.after(20, lambda: self._refresh_feature_c_window_geometry(keep_w, keep_h))
+        self.after(40, self._draw_feature_c_ball_map)
+
+    def _refresh_feature_c_window_geometry(self, keep_w=None, keep_h=None):
+        if self.feature_key != "feature_c":
+            return
+        root = self.winfo_toplevel()
+        root.update_idletasks()
+        current_w = root.winfo_width() if keep_w is None else keep_w
+        current_h = root.winfo_height() if keep_h is None else keep_h
+        screen_w = root.winfo_screenwidth()
+        screen_h = root.winfo_screenheight()
+        target_w = min(current_w, max(780, screen_w - 80))
+        target_h = min(current_h, max(520, screen_h - 100))
+        root.geometry(f"{target_w}x{target_h}")
 
     def _draw_feature_c_ball_map(self):
         if not FEATURE_C_MPL_AVAILABLE:
@@ -774,9 +817,7 @@ class FeaturePage(ttk.Frame):
                 color_values.append("#8e8e8e")
 
         ax.scatter(xs, ys, c=color_values, s=7, marker="o", linewidths=0, rasterized=True)
-        x_min, x_max, y_min, y_max = self._get_feature_c_axis_limits(xs, ys)
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
+        self._apply_feature_c_axes_layout(ax, xs, ys)
         ax.axhline(0, color="#9e9e9e", linewidth=0.8, linestyle="--")
         ax.axvline(0, color="#9e9e9e", linewidth=0.8, linestyle="--")
         ax.set_facecolor("white")
@@ -790,10 +831,7 @@ class FeaturePage(ttk.Frame):
             page_text = f"Page {self.feature_c_page_index + 1}/{total_pages} | Nets on page: {len(self.feature_c_color_by_net)}"
         else:
             page_text = "Page 0/0 | Nets on page: 0"
-        ax.set_title(
-            f"Gray: normal | Light-gray: highlighted on other pages | Points: {len(self.feature_c_points):,} | {page_text}",
-            fontsize=9,
-        )
+        ax.set_title(f"Points: {len(self.feature_c_points):,} | {page_text}", fontsize=9)
 
         self._draw_feature_c_legend()
         self.feature_c_mpl_canvas.draw_idle()
@@ -865,26 +903,12 @@ class FeaturePage(ttk.Frame):
         if not self.feature_c_active_nets:
             messagebox.showinfo("Feature C", "No pasted net names matched loaded ball map nets.")
 
-    def _clear_feature_c_highlight(self):
-        if self.feature_key != "feature_c":
-            return
-        self.feature_c_active_nets.clear()
-        self.feature_c_color_by_net = {}
-        self.feature_c_matched_nets = []
-        self.feature_c_highlight_pages = []
-        self.feature_c_page_index = 0
-        if self.feature_c_paste_text is not None:
-            self.feature_c_paste_text.delete("1.0", "end")
-        self._update_feature_c_page_controls()
-        self._draw_feature_c_ball_map()
-        self._append_log("[Feature C] Cleared highlights.")
-
     def _copy_feature_c_plot_image(self):
         if not self.feature_c_points:
-            messagebox.showwarning("Copy failed", "Load ball map data first.")
+            self._append_log("[Feature C] Copy plot skipped: no loaded ball map data.")
             return
         if not FEATURE_C_MPL_AVAILABLE:
-            messagebox.showerror("matplotlib required", "Install with:\npython -m pip install matplotlib")
+            self._append_log("[Feature C] Copy plot failed: matplotlib not available.")
             return
         temp_path = Path(tempfile.gettempdir()) / "feature_c_plot_hd.png"
         self._save_feature_c_plot_png(temp_path, dpi=300)
@@ -892,7 +916,7 @@ class FeaturePage(ttk.Frame):
 
     def _copy_feature_c_legend_image(self):
         if not FEATURE_C_MPL_AVAILABLE:
-            messagebox.showerror("matplotlib required", "Install with:\npython -m pip install matplotlib")
+            self._append_log("[Feature C] Copy legend failed: matplotlib not available.")
             return
         temp_path = Path(tempfile.gettempdir()) / "feature_c_legend_hd.png"
         self._save_feature_c_legend_png(temp_path, dpi=300)
@@ -901,6 +925,7 @@ class FeaturePage(ttk.Frame):
     def _save_feature_c_plot_png(self, output_path: Path, dpi=300):
         fig = Figure(figsize=(12, 8), dpi=100)
         ax = fig.add_subplot(111)
+        fig.subplots_adjust(left=0.05, right=0.995, bottom=0.08, top=0.95)
 
         if not self.feature_c_points:
             ax.text(0.02, 0.96, "Run to load a ball map file.", transform=ax.transAxes, va="top", color="#555555")
@@ -918,9 +943,7 @@ class FeaturePage(ttk.Frame):
                 else:
                     color_values.append("#8e8e8e")
             ax.scatter(xs, ys, c=color_values, s=8, marker="o", linewidths=0, rasterized=True)
-            x_min, x_max, y_min, y_max = self._get_feature_c_axis_limits(xs, ys)
-            ax.set_xlim(x_min, x_max)
-            ax.set_ylim(y_min, y_max)
+            self._apply_feature_c_axes_layout(ax, xs, ys)
             ax.axhline(0, color="#9e9e9e", linewidth=0.9, linestyle="--")
             ax.axvline(0, color="#9e9e9e", linewidth=0.9, linestyle="--")
             ax.set_xlabel(self.feature_c_x_col or "X")
@@ -932,10 +955,7 @@ class FeaturePage(ttk.Frame):
             page_text = f"Page {self.feature_c_page_index + 1}/{total_pages} | Nets on page: {len(self.feature_c_color_by_net)}"
         else:
             page_text = "Page 0/0 | Nets on page: 0"
-        ax.set_title(
-            f"Gray: normal | Light-gray: highlighted on other pages | Points: {len(self.feature_c_points):,} | {page_text}",
-            fontsize=10,
-        )
+        ax.set_title(f"Points: {len(self.feature_c_points):,} | {page_text}", fontsize=10)
         fig.savefig(output_path, dpi=dpi, facecolor="white", bbox_inches="tight")
 
     def _get_feature_c_axis_limits(self, xs, ys):
@@ -948,6 +968,19 @@ class FeaturePage(ttk.Frame):
         pad_x = max_abs_x * 0.03
         pad_y = max_abs_y * 0.03
         return (-max_abs_x - pad_x, max_abs_x + pad_x, -max_abs_y - pad_y, max_abs_y + pad_y)
+
+    def _apply_feature_c_axes_layout(self, ax, xs, ys):
+        x_min, x_max, y_min, y_max = self._get_feature_c_axis_limits(xs, ys)
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+        span_x = max(x_max - x_min, 1e-9)
+        span_y = max(y_max - y_min, 1e-9)
+        ax.set_aspect("equal", adjustable="box")
+        try:
+            ax.set_box_aspect(span_y / span_x)
+        except Exception:
+            pass
+        ax.margins(x=0, y=0)
 
     def _save_feature_c_legend_png(self, output_path: Path, dpi=300):
         fig = Figure(figsize=(6, 8), dpi=100)
@@ -980,7 +1013,7 @@ class FeaturePage(ttk.Frame):
             if not image_path.exists():
                 raise FileNotFoundError(str(image_path))
         except Exception as exc:
-            messagebox.showerror("Save failed", str(exc))
+            self._append_log(f"[Feature C] Copy {image_tag} failed: {exc}")
             return
 
         ps_path = str(image_path).replace("'", "''")
@@ -1000,14 +1033,9 @@ class FeaturePage(ttk.Frame):
         )
         if proc.returncode != 0:
             self._append_log(f"[Feature C] Clipboard copy failed: {proc.stderr.strip()}")
-            messagebox.showerror(
-                "Clipboard failed",
-                f"Could not copy image to clipboard.\nSaved file:\n{image_path}",
-            )
             return
 
         self._append_log(f"[Feature C] Copied {image_tag} image to clipboard.")
-        messagebox.showinfo("Copied", f"{image_tag.capitalize()} image copied to clipboard.")
 
     def _append_log(self, msg: str):
         self.log_buffer.append(msg)
