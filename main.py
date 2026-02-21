@@ -1,5 +1,7 @@
 import re
 import colorsys
+import subprocess
+import tempfile
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -138,6 +140,9 @@ class FeaturePage(ttk.Frame):
         self.feature_c_legend_canvas = None
         self.feature_c_prev_btn = None
         self.feature_c_next_btn = None
+        self.feature_c_toggle_loaded_btn = None
+        self.feature_c_loaded_frame = None
+        self.feature_c_loaded_visible = False
 
         self._build_ui()
 
@@ -155,7 +160,7 @@ class FeaturePage(ttk.Frame):
         main.pack(fill="both", expand=True)
         main.rowconfigure(1, weight=1)
         if self.feature_key == "feature_c":
-            main.rowconfigure(2, weight=1)
+            main.rowconfigure(2, weight=0)
         main.columnconfigure(0, weight=1)
 
         input_frame = ttk.LabelFrame(main, text="Input", padding=10)
@@ -179,6 +184,14 @@ class FeaturePage(ttk.Frame):
             actions_row.pack(fill="x", pady=(0, 2))
             ttk.Button(actions_row, text="Apply Highlight", command=self._apply_feature_c_highlight).pack(side="left")
             ttk.Button(actions_row, text="Clear Highlight", command=self._clear_feature_c_highlight).pack(side="left", padx=(6, 0))
+            ttk.Button(actions_row, text="Copy Plot", command=self._copy_feature_c_plot_image).pack(side="left", padx=(12, 0))
+            ttk.Button(actions_row, text="Copy Legend", command=self._copy_feature_c_legend_image).pack(side="left", padx=(6, 0))
+            self.feature_c_toggle_loaded_btn = ttk.Button(
+                actions_row,
+                text="Show Loaded Data",
+                command=self._toggle_feature_c_loaded_data,
+            )
+            self.feature_c_toggle_loaded_btn.pack(side="left", padx=(6, 0))
             self.feature_c_prev_btn = ttk.Button(actions_row, text="Prev", command=self._feature_c_prev_page)
             self.feature_c_prev_btn.pack(side="right")
             self.feature_c_next_btn = ttk.Button(actions_row, text="Next", command=self._feature_c_next_page)
@@ -201,9 +214,10 @@ class FeaturePage(ttk.Frame):
             self.feature_c_legend_canvas = tk.Canvas(plot_frame, width=240, bg="#fafafa", highlightthickness=1)
             self.feature_c_legend_canvas.grid(row=0, column=1, sticky="ns", padx=(10, 0))
 
-            result_frame = ttk.LabelFrame(main, text="Loaded Data", padding=10)
-            result_frame.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
-            self._build_result_tree(result_frame)
+            self.feature_c_loaded_frame = ttk.LabelFrame(main, text="Loaded Data", padding=10)
+            self.feature_c_loaded_frame.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
+            self._build_result_tree(self.feature_c_loaded_frame)
+            self.feature_c_loaded_frame.grid_remove()
         else:
             result_frame = ttk.LabelFrame(main, text="Result DataFrame", padding=10)
             result_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
@@ -677,6 +691,19 @@ class FeaturePage(ttk.Frame):
             self._draw_feature_c_ball_map()
             self._draw_feature_c_legend()
 
+    def _toggle_feature_c_loaded_data(self):
+        if self.feature_key != "feature_c" or self.feature_c_loaded_frame is None:
+            return
+        self.feature_c_loaded_visible = not self.feature_c_loaded_visible
+        if self.feature_c_loaded_visible:
+            self.feature_c_loaded_frame.grid()
+            if self.feature_c_toggle_loaded_btn is not None:
+                self.feature_c_toggle_loaded_btn.configure(text="Hide Loaded Data")
+        else:
+            self.feature_c_loaded_frame.grid_remove()
+            if self.feature_c_toggle_loaded_btn is not None:
+                self.feature_c_toggle_loaded_btn.configure(text="Show Loaded Data")
+
     def _draw_feature_c_ball_map(self):
         if self.feature_c_canvas is None:
             return
@@ -712,9 +739,9 @@ class FeaturePage(ttk.Frame):
             if point["net_norm"] in self.feature_c_color_by_net:
                 color = self.feature_c_color_by_net[point["net_norm"]]
             elif point["net_norm"] in self.feature_c_active_nets:
-                color = "#bdbdbd"
+                color = "#c7c7c7"
             else:
-                color = "#3f7fbf"
+                color = "#8e8e8e"
             item_id = canvas.create_oval(px - r, py - r, px + r, py + r, fill=color, outline="")
             self.feature_c_item_to_net[item_id] = point["net_norm"]
 
@@ -727,7 +754,7 @@ class FeaturePage(ttk.Frame):
             pad,
             6,
             anchor="nw",
-            text=f"Blue: normal | Gray: highlighted on other pages | Points: {len(self.feature_c_points):,} | {page_text}",
+            text=f"Gray: normal | Light-gray: highlighted on other pages | Points: {len(self.feature_c_points):,} | {page_text}",
             fill="#444444",
         )
 
@@ -826,6 +853,142 @@ class FeaturePage(ttk.Frame):
         self._draw_feature_c_ball_map()
         self._draw_feature_c_legend()
         self._append_log("[Feature C] Cleared highlights.")
+
+    def _copy_feature_c_plot_image(self):
+        if not self.feature_c_points:
+            messagebox.showwarning("Copy failed", "Load ball map data first.")
+            return
+        try:
+            image = self._render_feature_c_plot_image(width=2400, height=1600)
+        except RuntimeError as exc:
+            messagebox.showerror("Pillow required", f"{exc}\nInstall with:\npython -m pip install pillow")
+            return
+        self._copy_pil_image_to_clipboard(image, "plot")
+
+    def _copy_feature_c_legend_image(self):
+        try:
+            image = self._render_feature_c_legend_image(width=1400, min_height=900)
+        except RuntimeError as exc:
+            messagebox.showerror("Pillow required", f"{exc}\nInstall with:\npython -m pip install pillow")
+            return
+        self._copy_pil_image_to_clipboard(image, "legend")
+
+    def _render_feature_c_plot_image(self, width=2400, height=1600):
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError as exc:
+            raise RuntimeError("Pillow is required for HD image copy.") from exc
+
+        image = Image.new("RGB", (width, height), "white")
+        draw = ImageDraw.Draw(image)
+
+        if not self.feature_c_points:
+            draw.text((24, 24), "Run to load a ball map file.", fill="#555555")
+            return image
+
+        pad = 72
+        xs = [p["x"] for p in self.feature_c_points]
+        ys = [p["y"] for p in self.feature_c_points]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        span_x = max(max_x - min_x, 1e-9)
+        span_y = max(max_y - min_y, 1e-9)
+        draw_w = max(width - 2 * pad, 10)
+        draw_h = max(height - 2 * pad, 10)
+
+        draw.rectangle((pad, pad, width - pad, height - pad), outline="#cccccc", width=2)
+
+        radius = 8
+        for point in self.feature_c_points:
+            px = pad + ((point["x"] - min_x) / span_x) * draw_w
+            py = height - pad - ((point["y"] - min_y) / span_y) * draw_h
+            if point["net_norm"] in self.feature_c_color_by_net:
+                color = self.feature_c_color_by_net[point["net_norm"]]
+            elif point["net_norm"] in self.feature_c_active_nets:
+                color = "#c7c7c7"
+            else:
+                color = "#8e8e8e"
+            draw.ellipse((px - radius, py - radius, px + radius, py + radius), fill=color)
+
+        total_pages = len(self.feature_c_highlight_pages)
+        if total_pages > 0:
+            page_text = f"Page {self.feature_c_page_index + 1}/{total_pages} | Nets on page: {len(self.feature_c_color_by_net)}"
+        else:
+            page_text = "Page 0/0 | Nets on page: 0"
+        title_text = (
+            f"Gray: normal | Light-gray: highlighted on other pages | Points: {len(self.feature_c_points):,} | {page_text}"
+        )
+        draw.text((pad, 16), title_text, fill="#444444")
+        return image
+
+    def _render_feature_c_legend_image(self, width=1400, min_height=900):
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError as exc:
+            raise RuntimeError("Pillow is required for HD image copy.") from exc
+
+        row_h = 32
+        content_h = 64 + max(len(self.feature_c_color_by_net), 1) * row_h + 20
+        height = max(min_height, content_h)
+        image = Image.new("RGB", (width, height), "#fafafa")
+        draw = ImageDraw.Draw(image)
+
+        draw.text((18, 14), "Legend (Current Page)", fill="#333333")
+        if not self.feature_c_color_by_net:
+            draw.text((18, 52), "No highlighted nets.", fill="#666666")
+            return image
+
+        y = 56
+        for net_norm, color in self.feature_c_color_by_net.items():
+            display_name = self.feature_c_display_net_by_norm.get(net_norm, net_norm)
+            draw.rectangle((18, y + 4, 40, y + 24), fill=color)
+            draw.text((48, y + 4), display_name, fill="#222222")
+            y += row_h
+        return image
+
+    def _copy_pil_image_to_clipboard(self, image, image_tag: str):
+        try:
+            from PIL import Image
+            if not isinstance(image, Image.Image):
+                raise TypeError("image must be PIL.Image.Image")
+        except ImportError:
+            messagebox.showerror(
+                "Pillow required",
+                "Image copy needs Pillow.\nInstall with:\npython -m pip install pillow",
+            )
+            return
+
+        temp_path = Path(tempfile.gettempdir()) / f"feature_c_{image_tag}_hd.png"
+        try:
+            image.save(temp_path, "PNG")
+        except Exception as exc:
+            messagebox.showerror("Save failed", str(exc))
+            return
+        ps_path = str(temp_path).replace("'", "''")
+        ps_script = (
+            f"$path = '{ps_path}'; "
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "Add-Type -AssemblyName System.Drawing; "
+            "$img = [System.Drawing.Image]::FromFile($path); "
+            "[System.Windows.Forms.Clipboard]::SetImage($img); "
+            "$img.Dispose();"
+        )
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-STA", "-Command", ps_script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            self._append_log(f"[Feature C] Clipboard copy failed: {proc.stderr.strip()}")
+            messagebox.showerror(
+                "Clipboard failed",
+                f"Could not copy image to clipboard.\nSaved file:\n{temp_path}",
+            )
+            return
+
+        self._append_log(f"[Feature C] Copied {image_tag} image to clipboard.")
+        messagebox.showinfo("Copied", f"{image_tag.capitalize()} image copied to clipboard.")
 
     def _append_log(self, msg: str):
         self.log_buffer.append(msg)
