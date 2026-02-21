@@ -135,10 +135,13 @@ class FeaturePage(ttk.Frame):
         self.result_tree = None
         self.feature_c_paste_text = None
         self.feature_c_plot_host = None
+        self.feature_c_legend_host = None
         self.feature_c_mpl_figure = None
         self.feature_c_mpl_canvas = None
         self.feature_c_mpl_axes = None
         self.feature_c_mpl_legend_axes = None
+        self.feature_c_mpl_legend_figure = None
+        self.feature_c_mpl_legend_canvas = None
         self.feature_c_df = pd.DataFrame()
         self.feature_c_net_col = ""
         self.feature_c_x_col = ""
@@ -218,24 +221,35 @@ class FeaturePage(ttk.Frame):
             plot_frame = ttk.LabelFrame(main, text="Ball Map", padding=10)
             plot_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=(0, 8))
             plot_frame.rowconfigure(0, weight=1)
+            plot_frame.rowconfigure(1, weight=0)
             plot_frame.columnconfigure(0, weight=1)
             self.feature_c_plot_host = ttk.Frame(plot_frame)
             self.feature_c_plot_host.grid(row=0, column=0, sticky="nsew")
+            self.feature_c_legend_host = ttk.LabelFrame(plot_frame, text="Legend (Current Page)", padding=6)
+            self.feature_c_legend_host.grid(row=1, column=0, sticky="ew", pady=(8, 0))
 
             if FEATURE_C_MPL_AVAILABLE:
-                fig = Figure(figsize=(9.5, 5.4), dpi=100)
-                gs = fig.add_gridspec(1, 2, width_ratios=[4.6, 1.6], wspace=0.05)
-                self.feature_c_mpl_axes = fig.add_subplot(gs[0, 0])
-                self.feature_c_mpl_legend_axes = fig.add_subplot(gs[0, 1])
-                self.feature_c_mpl_legend_axes.axis("off")
+                fig = Figure(figsize=(10.2, 6.2), dpi=100)
+                self.feature_c_mpl_axes = fig.add_subplot(111)
                 self.feature_c_mpl_figure = fig
                 self.feature_c_mpl_canvas = FigureCanvasTkAgg(fig, master=self.feature_c_plot_host)
                 self.feature_c_mpl_canvas.get_tk_widget().pack(fill="both", expand=True)
+
+                legend_fig = Figure(figsize=(10.2, 1.8), dpi=100)
+                self.feature_c_mpl_legend_axes = legend_fig.add_subplot(111)
+                self.feature_c_mpl_legend_axes.axis("off")
+                self.feature_c_mpl_legend_figure = legend_fig
+                self.feature_c_mpl_legend_canvas = FigureCanvasTkAgg(legend_fig, master=self.feature_c_legend_host)
+                self.feature_c_mpl_legend_canvas.get_tk_widget().pack(fill="x", expand=True)
             else:
                 ttk.Label(
                     self.feature_c_plot_host,
                     text="matplotlib is not available. Install with:\npython -m pip install matplotlib",
                 ).pack(fill="both", expand=True, padx=8, pady=8)
+                ttk.Label(
+                    self.feature_c_legend_host,
+                    text="Legend requires matplotlib.",
+                ).pack(fill="x", expand=True, padx=8, pady=4)
 
             self.feature_c_loaded_frame = ttk.LabelFrame(main, text="Loaded Data", padding=10)
             self.feature_c_loaded_frame.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
@@ -760,6 +774,11 @@ class FeaturePage(ttk.Frame):
                 color_values.append("#8e8e8e")
 
         ax.scatter(xs, ys, c=color_values, s=7, marker="o", linewidths=0, rasterized=True)
+        x_min, x_max, y_min, y_max = self._get_feature_c_axis_limits(xs, ys)
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+        ax.axhline(0, color="#9e9e9e", linewidth=0.8, linestyle="--")
+        ax.axvline(0, color="#9e9e9e", linewidth=0.8, linestyle="--")
         ax.set_facecolor("white")
         ax.set_xlabel(self.feature_c_x_col or "X")
         ax.set_ylabel(self.feature_c_y_col or "Y")
@@ -785,6 +804,8 @@ class FeaturePage(ttk.Frame):
         if self.feature_c_mpl_legend_axes is None:
             return
         self._draw_feature_c_legend_on_axes(self.feature_c_mpl_legend_axes)
+        if self.feature_c_mpl_legend_canvas is not None:
+            self.feature_c_mpl_legend_canvas.draw_idle()
 
     def _extract_feature_c_paste_nets(self):
         if self.feature_c_paste_text is None:
@@ -879,10 +900,7 @@ class FeaturePage(ttk.Frame):
 
     def _save_feature_c_plot_png(self, output_path: Path, dpi=300):
         fig = Figure(figsize=(12, 8), dpi=100)
-        gs = fig.add_gridspec(1, 2, width_ratios=[4.6, 1.6], wspace=0.05)
-        ax = fig.add_subplot(gs[0, 0])
-        legend_ax = fig.add_subplot(gs[0, 1])
-        legend_ax.axis("off")
+        ax = fig.add_subplot(111)
 
         if not self.feature_c_points:
             ax.text(0.02, 0.96, "Run to load a ball map file.", transform=ax.transAxes, va="top", color="#555555")
@@ -900,11 +918,15 @@ class FeaturePage(ttk.Frame):
                 else:
                     color_values.append("#8e8e8e")
             ax.scatter(xs, ys, c=color_values, s=8, marker="o", linewidths=0, rasterized=True)
+            x_min, x_max, y_min, y_max = self._get_feature_c_axis_limits(xs, ys)
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+            ax.axhline(0, color="#9e9e9e", linewidth=0.9, linestyle="--")
+            ax.axvline(0, color="#9e9e9e", linewidth=0.9, linestyle="--")
             ax.set_xlabel(self.feature_c_x_col or "X")
             ax.set_ylabel(self.feature_c_y_col or "Y")
             ax.set_aspect("equal", adjustable="box")
 
-        self._draw_feature_c_legend_on_axes(legend_ax)
         total_pages = len(self.feature_c_highlight_pages)
         if total_pages > 0:
             page_text = f"Page {self.feature_c_page_index + 1}/{total_pages} | Nets on page: {len(self.feature_c_color_by_net)}"
@@ -915,6 +937,17 @@ class FeaturePage(ttk.Frame):
             fontsize=10,
         )
         fig.savefig(output_path, dpi=dpi, facecolor="white", bbox_inches="tight")
+
+    def _get_feature_c_axis_limits(self, xs, ys):
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+
+        max_abs_x = max(abs(min_x), abs(max_x), 1.0)
+        max_abs_y = max(abs(min_y), abs(max_y), 1.0)
+
+        pad_x = max_abs_x * 0.03
+        pad_y = max_abs_y * 0.03
+        return (-max_abs_x - pad_x, max_abs_x + pad_x, -max_abs_y - pad_y, max_abs_y + pad_y)
 
     def _save_feature_c_legend_png(self, output_path: Path, dpi=300):
         fig = Figure(figsize=(6, 8), dpi=100)
