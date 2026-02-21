@@ -1,4 +1,5 @@
 import re
+import colorsys
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -16,6 +17,7 @@ class App(tk.Tk):
         self.shared_state = {
             "last_file_path": "",
             "feature_a_result_df": None,
+            "feature_c_ball_map_df": None,
         }
 
         self._build_style()
@@ -64,8 +66,8 @@ class HomePage(ttk.Frame):
             },
             {
                 "key": "feature_c",
-                "name": "Feature C - Scatter Preview",
-                "desc": "Placeholder.",
+                "name": "Feature C - Ball Map Visualizer",
+                "desc": "Load ball map and highlight pasted bad-net list.",
             },
         ]
 
@@ -100,10 +102,12 @@ class HomePage(ttk.Frame):
 
 
 class FeaturePage(ttk.Frame):
+    FEATURE_C_PAGE_SIZE = 20
+
     FEATURE_META = {
         "feature_a": "Feature A - CSV/TXT Net Pair View",
         "feature_b": "Feature B - TXT Analysis",
-        "feature_c": "Feature C - Scatter Preview",
+        "feature_c": "Feature C - Ball Map Visualizer",
     }
 
     def __init__(self, parent, app, feature_key):
@@ -116,6 +120,24 @@ class FeaturePage(ttk.Frame):
         self.log_text = None
         self.log_buffer = []
         self.result_tree = None
+        self.feature_c_paste_text = None
+        self.feature_c_canvas = None
+        self.feature_c_df = pd.DataFrame()
+        self.feature_c_net_col = ""
+        self.feature_c_x_col = ""
+        self.feature_c_y_col = ""
+        self.feature_c_points = []
+        self.feature_c_item_to_net = {}
+        self.feature_c_active_nets = set()
+        self.feature_c_display_net_by_norm = {}
+        self.feature_c_color_by_net = {}
+        self.feature_c_matched_nets = []
+        self.feature_c_highlight_pages = []
+        self.feature_c_page_index = 0
+        self.feature_c_page_label_var = tk.StringVar(value="Page 0/0")
+        self.feature_c_legend_canvas = None
+        self.feature_c_prev_btn = None
+        self.feature_c_next_btn = None
 
         self._build_ui()
 
@@ -132,6 +154,8 @@ class FeaturePage(ttk.Frame):
         main = ttk.Frame(self)
         main.pack(fill="both", expand=True)
         main.rowconfigure(1, weight=1)
+        if self.feature_key == "feature_c":
+            main.rowconfigure(2, weight=1)
         main.columnconfigure(0, weight=1)
 
         input_frame = ttk.LabelFrame(main, text="Input", padding=10)
@@ -144,23 +168,64 @@ class FeaturePage(ttk.Frame):
         ttk.Entry(file_row, textvariable=self.input_file_var).pack(side="left", fill="x", expand=True, padx=6)
         ttk.Button(file_row, text="Browse", command=self._choose_file).pack(side="left")
 
+        if self.feature_key == "feature_c":
+            paste_row = ttk.Frame(input_frame)
+            paste_row.pack(fill="x", pady=(0, 8))
+            ttk.Label(paste_row, text="Bad-net paste:").pack(anchor="w")
+            self.feature_c_paste_text = tk.Text(paste_row, height=4, wrap="none")
+            self.feature_c_paste_text.pack(fill="x", expand=True, pady=(4, 0))
+
+            actions_row = ttk.Frame(input_frame)
+            actions_row.pack(fill="x", pady=(0, 2))
+            ttk.Button(actions_row, text="Apply Highlight", command=self._apply_feature_c_highlight).pack(side="left")
+            ttk.Button(actions_row, text="Clear Highlight", command=self._clear_feature_c_highlight).pack(side="left", padx=(6, 0))
+            self.feature_c_prev_btn = ttk.Button(actions_row, text="Prev", command=self._feature_c_prev_page)
+            self.feature_c_prev_btn.pack(side="right")
+            self.feature_c_next_btn = ttk.Button(actions_row, text="Next", command=self._feature_c_next_page)
+            self.feature_c_next_btn.pack(side="right", padx=(6, 0))
+            ttk.Label(actions_row, textvariable=self.feature_c_page_label_var).pack(side="right", padx=(0, 10))
+
         ttk.Button(input_frame, text="Run", command=self.run_feature).pack(anchor="e", pady=(8, 0))
 
-        result_frame = ttk.LabelFrame(main, text="Result DataFrame", padding=10)
-        result_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
-        result_frame.rowconfigure(0, weight=1)
-        result_frame.columnconfigure(0, weight=1)
+        if self.feature_key == "feature_c":
+            plot_frame = ttk.LabelFrame(main, text="Ball Map", padding=10)
+            plot_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=(0, 8))
+            plot_frame.rowconfigure(0, weight=1)
+            plot_frame.columnconfigure(0, weight=1)
+            plot_frame.columnconfigure(1, weight=0)
 
-        self.result_tree = ttk.Treeview(result_frame, show="headings")
+            self.feature_c_canvas = tk.Canvas(plot_frame, bg="white", highlightthickness=0)
+            self.feature_c_canvas.grid(row=0, column=0, sticky="nsew")
+            self.feature_c_canvas.bind("<Configure>", self._on_feature_c_canvas_resize)
+
+            self.feature_c_legend_canvas = tk.Canvas(plot_frame, width=240, bg="#fafafa", highlightthickness=1)
+            self.feature_c_legend_canvas.grid(row=0, column=1, sticky="ns", padx=(10, 0))
+
+            result_frame = ttk.LabelFrame(main, text="Loaded Data", padding=10)
+            result_frame.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
+            self._build_result_tree(result_frame)
+        else:
+            result_frame = ttk.LabelFrame(main, text="Result DataFrame", padding=10)
+            result_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
+            self._build_result_tree(result_frame)
+
+        self._append_log(f"[Info] Feature logic is ready for {title}.")
+        if self.feature_key == "feature_c":
+            self._update_feature_c_page_controls()
+            self._draw_feature_c_legend()
+
+    def _build_result_tree(self, parent):
+        parent.rowconfigure(0, weight=1)
+        parent.columnconfigure(0, weight=1)
+
+        self.result_tree = ttk.Treeview(parent, show="headings")
         self.result_tree.grid(row=0, column=0, sticky="nsew")
 
-        y_scroll = ttk.Scrollbar(result_frame, orient="vertical", command=self.result_tree.yview)
+        y_scroll = ttk.Scrollbar(parent, orient="vertical", command=self.result_tree.yview)
         y_scroll.grid(row=0, column=1, sticky="ns")
-        x_scroll = ttk.Scrollbar(result_frame, orient="horizontal", command=self.result_tree.xview)
+        x_scroll = ttk.Scrollbar(parent, orient="horizontal", command=self.result_tree.xview)
         x_scroll.grid(row=1, column=0, sticky="ew")
         self.result_tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
-
-        self._append_log("[Info] Feature logic is ready for Feature A.")
 
     def _open_log_window(self):
         if self.log_window is not None and self.log_window.winfo_exists():
@@ -284,11 +349,63 @@ class FeaturePage(ttk.Frame):
                 last_error = exc
         raise ValueError(f"Could not read file with tab separator. Last error: {last_error}")
 
+    def _read_table_file_auto(self, file_path: Path) -> pd.DataFrame:
+        separators = [None, ",", "\t", ";", "|"]
+        last_error = None
+        for enc in ("utf-8-sig", "cp949", "euc-kr", "utf-8"):
+            for sep in separators:
+                try:
+                    kwargs = {
+                        "encoding": enc,
+                        "dtype": str,
+                        "keep_default_na": False,
+                    }
+                    if sep is None:
+                        kwargs["sep"] = None
+                        kwargs["engine"] = "python"
+                    else:
+                        kwargs["sep"] = sep
+                    df = pd.read_csv(file_path, **kwargs)
+                    if not df.empty and len(df.columns) >= 2:
+                        return df
+                except Exception as exc:  # noqa: PERF203
+                    last_error = exc
+        raise ValueError(f"Could not read file as CSV/TXT. Last error: {last_error}")
+
     def _find_net_column(self, df: pd.DataFrame) -> str:
         for name in ("Net Name", "Net"):
             if name in df.columns:
                 return name
         return ""
+
+    def _get_column_map(self, df: pd.DataFrame):
+        col_map = {}
+        for col in df.columns:
+            norm = re.sub(r"\s+", " ", str(col).strip()).casefold()
+            col_map[norm] = col
+        return col_map
+
+    def _find_feature_c_columns(self, df: pd.DataFrame):
+        col_map = self._get_column_map(df)
+
+        net_col = ""
+        for candidate in ("Net", "Net Name"):
+            found = col_map.get(candidate.casefold())
+            if found:
+                net_col = found
+                break
+
+        xy_pair = ("", "")
+        for x_candidate, y_candidate in (("XLocation", "YLocation"), ("X Coord", "Y Coord")):
+            x_found = col_map.get(x_candidate.casefold())
+            y_found = col_map.get(y_candidate.casefold())
+            if x_found and y_found:
+                xy_pair = (x_found, y_found)
+                break
+
+        if not net_col or not xy_pair[0] or not xy_pair[1]:
+            return "", "", ""
+        return net_col, xy_pair[0], xy_pair[1]
 
     def _parse_net_name(self, raw_name: str):
         text = str(raw_name).strip()
@@ -380,8 +497,335 @@ class FeaturePage(ttk.Frame):
         messagebox.showinfo("Info", "Feature B logic is not implemented yet.")
 
     def _run_feature_c(self):
-        self._append_log("[Feature C] Placeholder.")
-        messagebox.showinfo("Info", "Feature C logic is not implemented yet.")
+        path_text = self.input_file_var.get().strip()
+        if not path_text:
+            messagebox.showwarning("Input required", "Select a CSV/TXT file first.")
+            return
+
+        file_path = Path(path_text)
+        if not file_path.exists():
+            messagebox.showerror("File not found", f"Input file does not exist:\n{file_path}")
+            return
+
+        try:
+            df = self._read_table_file_auto(file_path)
+        except Exception as exc:
+            self._append_log(f"[Error] Failed to read Feature C input: {exc}")
+            messagebox.showerror("Read failed", str(exc))
+            return
+
+        net_col, x_col, y_col = self._find_feature_c_columns(df)
+        if not net_col or not x_col or not y_col:
+            msg = (
+                "Required columns not found.\n"
+                "Net: 'Net' or 'Net Name'\n"
+                "XY: ('XLocation','YLocation') or ('X Coord','Y Coord')"
+            )
+            self._append_log(f"[Error] {msg}")
+            messagebox.showerror("Column error", msg)
+            return
+
+        points = self._build_feature_c_points(df, net_col, x_col, y_col)
+        if not points:
+            msg = f"No valid numeric coordinates found in columns: {x_col}, {y_col}"
+            self._append_log(f"[Error] {msg}")
+            messagebox.showerror("Data error", msg)
+            return
+
+        self.feature_c_df = df.copy()
+        self.feature_c_net_col = net_col
+        self.feature_c_x_col = x_col
+        self.feature_c_y_col = y_col
+        self.feature_c_points = points
+        self.feature_c_active_nets.clear()
+        self.feature_c_color_by_net = {}
+        self.feature_c_matched_nets = []
+        self.feature_c_highlight_pages = []
+        self.feature_c_page_index = 0
+        self.feature_c_display_net_by_norm = {}
+        for point in self.feature_c_points:
+            if point["net_norm"] and point["net_norm"] not in self.feature_c_display_net_by_norm:
+                self.feature_c_display_net_by_norm[point["net_norm"]] = point["net"]
+        self.app.shared_state["feature_c_ball_map_df"] = self.feature_c_df
+        self._show_result_dataframe(self.feature_c_df)
+        self._update_feature_c_page_controls()
+        self._draw_feature_c_ball_map()
+        self._draw_feature_c_legend()
+
+        self._append_log(f"[Feature C] Loaded rows: {len(df):,}")
+        self._append_log(f"[Feature C] Plotted points: {len(points):,}")
+        self._append_log(f"[Feature C] Columns: Net={net_col}, X={x_col}, Y={y_col}")
+
+    def _to_float(self, value):
+        text = str(value).strip().replace(",", "")
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    def _normalize_net(self, net_name: str):
+        return str(net_name).strip().casefold()
+
+    def _build_feature_c_points(self, df: pd.DataFrame, net_col: str, x_col: str, y_col: str):
+        points = []
+        for idx, row in df.iterrows():
+            x = self._to_float(row.get(x_col, ""))
+            y = self._to_float(row.get(y_col, ""))
+            if x is None or y is None:
+                continue
+            net = str(row.get(net_col, "")).strip()
+            points.append(
+                {
+                    "idx": idx,
+                    "x": x,
+                    "y": y,
+                    "net": net,
+                    "net_norm": self._normalize_net(net),
+                }
+            )
+        return points
+
+    def _paginate_items(self, items, page_size):
+        if page_size <= 0:
+            return [list(items)] if items else []
+        return [list(items[idx : idx + page_size]) for idx in range(0, len(items), page_size)]
+
+    def _build_feature_c_color_map(self, page_nets):
+        palette = [
+            "#e53935",
+            "#1e88e5",
+            "#43a047",
+            "#fb8c00",
+            "#8e24aa",
+            "#00897b",
+            "#f4511e",
+            "#3949ab",
+            "#7cb342",
+            "#6d4c41",
+        ]
+        color_map = {}
+        for idx, net_norm in enumerate(page_nets):
+            if idx < len(palette):
+                color_map[net_norm] = palette[idx]
+            else:
+                hue = (idx * 0.61803398875) % 1.0
+                r, g, b = colorsys.hsv_to_rgb(hue, 0.65, 0.9)
+                color_map[net_norm] = f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+        return color_map
+
+    def _prepare_feature_c_highlight_nets(self, pasted_nets, available_nets):
+        seen = set()
+        ordered_requested = []
+        display_by_norm = {}
+        for raw in pasted_nets:
+            value = str(raw).strip()
+            if not value:
+                continue
+            net_norm = self._normalize_net(value)
+            if net_norm not in seen:
+                seen.add(net_norm)
+                ordered_requested.append(net_norm)
+                display_by_norm[net_norm] = value
+
+        matched = [net_norm for net_norm in ordered_requested if net_norm in available_nets]
+        return matched, display_by_norm
+
+    def _update_feature_c_page_controls(self):
+        total_pages = len(self.feature_c_highlight_pages)
+        if total_pages == 0:
+            self.feature_c_page_label_var.set("Page 0/0")
+            if self.feature_c_prev_btn is not None:
+                self.feature_c_prev_btn.configure(state="disabled")
+            if self.feature_c_next_btn is not None:
+                self.feature_c_next_btn.configure(state="disabled")
+            return
+
+        self.feature_c_page_index = max(0, min(self.feature_c_page_index, total_pages - 1))
+        self.feature_c_page_label_var.set(f"Page {self.feature_c_page_index + 1}/{total_pages}")
+
+        if self.feature_c_prev_btn is not None:
+            prev_state = "normal" if self.feature_c_page_index > 0 else "disabled"
+            self.feature_c_prev_btn.configure(state=prev_state)
+        if self.feature_c_next_btn is not None:
+            next_state = "normal" if self.feature_c_page_index < total_pages - 1 else "disabled"
+            self.feature_c_next_btn.configure(state=next_state)
+
+    def _feature_c_prev_page(self):
+        if self.feature_c_page_index <= 0:
+            return
+        self.feature_c_page_index -= 1
+        page_nets = self.feature_c_highlight_pages[self.feature_c_page_index]
+        self.feature_c_color_by_net = self._build_feature_c_color_map(page_nets)
+        self._update_feature_c_page_controls()
+        self._draw_feature_c_ball_map()
+        self._draw_feature_c_legend()
+
+    def _feature_c_next_page(self):
+        if self.feature_c_page_index >= len(self.feature_c_highlight_pages) - 1:
+            return
+        self.feature_c_page_index += 1
+        page_nets = self.feature_c_highlight_pages[self.feature_c_page_index]
+        self.feature_c_color_by_net = self._build_feature_c_color_map(page_nets)
+        self._update_feature_c_page_controls()
+        self._draw_feature_c_ball_map()
+        self._draw_feature_c_legend()
+
+    def _on_feature_c_canvas_resize(self, _event):
+        if self.feature_key == "feature_c" and self.feature_c_points:
+            self._draw_feature_c_ball_map()
+            self._draw_feature_c_legend()
+
+    def _draw_feature_c_ball_map(self):
+        if self.feature_c_canvas is None:
+            return
+
+        canvas = self.feature_c_canvas
+        canvas.delete("all")
+        self.feature_c_item_to_net = {}
+
+        if not self.feature_c_points:
+            canvas.create_text(20, 20, anchor="nw", text="Run to load a ball map file.", fill="#555555")
+            return
+
+        width = max(canvas.winfo_width(), 300)
+        height = max(canvas.winfo_height(), 240)
+        pad = 22
+
+        xs = [p["x"] for p in self.feature_c_points]
+        ys = [p["y"] for p in self.feature_c_points]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+
+        span_x = max(max_x - min_x, 1e-9)
+        span_y = max(max_y - min_y, 1e-9)
+        draw_w = max(width - 2 * pad, 10)
+        draw_h = max(height - 2 * pad, 10)
+
+        canvas.create_rectangle(pad, pad, width - pad, height - pad, outline="#cccccc")
+
+        for point in self.feature_c_points:
+            px = pad + ((point["x"] - min_x) / span_x) * draw_w
+            py = height - pad - ((point["y"] - min_y) / span_y) * draw_h
+            r = 3
+            if point["net_norm"] in self.feature_c_color_by_net:
+                color = self.feature_c_color_by_net[point["net_norm"]]
+            elif point["net_norm"] in self.feature_c_active_nets:
+                color = "#bdbdbd"
+            else:
+                color = "#3f7fbf"
+            item_id = canvas.create_oval(px - r, py - r, px + r, py + r, fill=color, outline="")
+            self.feature_c_item_to_net[item_id] = point["net_norm"]
+
+        total_pages = len(self.feature_c_highlight_pages)
+        if total_pages > 0:
+            page_text = f"Page {self.feature_c_page_index + 1}/{total_pages} | Nets on page: {len(self.feature_c_color_by_net)}"
+        else:
+            page_text = "Page 0/0 | Nets on page: 0"
+        canvas.create_text(
+            pad,
+            6,
+            anchor="nw",
+            text=f"Blue: normal | Gray: highlighted on other pages | Points: {len(self.feature_c_points):,} | {page_text}",
+            fill="#444444",
+        )
+
+    def _draw_feature_c_legend(self):
+        if self.feature_c_legend_canvas is None:
+            return
+        canvas = self.feature_c_legend_canvas
+        canvas.delete("all")
+
+        width = max(canvas.winfo_width(), 220)
+        canvas.create_rectangle(0, 0, width, max(canvas.winfo_height(), 240), fill="#fafafa", outline="")
+        canvas.create_text(10, 10, anchor="nw", text="Legend (Current Page)", fill="#333333", font=("Malgun Gothic", 10, "bold"))
+
+        if not self.feature_c_color_by_net:
+            canvas.create_text(10, 34, anchor="nw", text="No highlighted nets.", fill="#666666")
+            return
+
+        y = 34
+        line_h = 18
+        for net_norm, color in self.feature_c_color_by_net.items():
+            display_name = self.feature_c_display_net_by_norm.get(net_norm, net_norm)
+            canvas.create_rectangle(10, y + 2, 22, y + 14, fill=color, outline="")
+            canvas.create_text(28, y, anchor="nw", text=display_name, fill="#222222")
+            y += line_h
+
+    def _extract_feature_c_paste_nets(self):
+        if self.feature_c_paste_text is None:
+            return []
+        raw = self.feature_c_paste_text.get("1.0", "end").strip()
+        if not raw:
+            return []
+
+        tokens = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if "\t" in line:
+                cells = [c.strip() for c in line.split("\t")]
+            elif "," in line:
+                cells = [c.strip() for c in line.split(",")]
+            else:
+                cells = [line]
+            for cell in cells:
+                if cell:
+                    tokens.append(cell)
+        return tokens
+
+    def _apply_feature_c_highlight(self):
+        if self.feature_key != "feature_c":
+            return
+        if not self.feature_c_points:
+            messagebox.showwarning("Load required", "Load a ball map file with Run first.")
+            return
+
+        pasted = self._extract_feature_c_paste_nets()
+        if not pasted:
+            messagebox.showwarning("Input required", "Paste net names first.")
+            return
+
+        available_nets = {p["net_norm"] for p in self.feature_c_points}
+        matched_nets, pasted_name_map = self._prepare_feature_c_highlight_nets(pasted, available_nets)
+        self.feature_c_active_nets = set(matched_nets)
+        self.feature_c_matched_nets = matched_nets
+        self.feature_c_display_net_by_norm.update(pasted_name_map)
+        self.feature_c_highlight_pages = self._paginate_items(self.feature_c_matched_nets, self.FEATURE_C_PAGE_SIZE)
+        self.feature_c_page_index = 0
+        page_nets = self.feature_c_highlight_pages[0] if self.feature_c_highlight_pages else []
+        self.feature_c_color_by_net = self._build_feature_c_color_map(page_nets)
+        self._update_feature_c_page_controls()
+        self._draw_feature_c_ball_map()
+        self._draw_feature_c_legend()
+
+        hit_points = sum(1 for p in self.feature_c_points if p["net_norm"] in self.feature_c_active_nets)
+        requested_count = len({self._normalize_net(net) for net in pasted if str(net).strip()})
+        self._append_log(f"[Feature C] Highlight requested nets: {requested_count:,}")
+        self._append_log(
+            f"[Feature C] Matched nets: {len(matched_nets):,} | Highlighted points: {hit_points:,} | "
+            f"Pages: {len(self.feature_c_highlight_pages):,}"
+        )
+
+        if not self.feature_c_active_nets:
+            messagebox.showinfo("Feature C", "No pasted net names matched loaded ball map nets.")
+
+    def _clear_feature_c_highlight(self):
+        if self.feature_key != "feature_c":
+            return
+        self.feature_c_active_nets.clear()
+        self.feature_c_color_by_net = {}
+        self.feature_c_matched_nets = []
+        self.feature_c_highlight_pages = []
+        self.feature_c_page_index = 0
+        if self.feature_c_paste_text is not None:
+            self.feature_c_paste_text.delete("1.0", "end")
+        self._update_feature_c_page_controls()
+        self._draw_feature_c_ball_map()
+        self._draw_feature_c_legend()
+        self._append_log("[Feature C] Cleared highlights.")
 
     def _append_log(self, msg: str):
         self.log_buffer.append(msg)
