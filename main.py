@@ -112,7 +112,6 @@ class FeaturePage(ttk.Frame):
         self.feature_key = feature_key
 
         self.input_file_var = tk.StringVar(value=self.app.shared_state.get("last_file_path", ""))
-        self.manual_input_var = tk.StringVar()
         self.log_window = None
         self.log_text = None
         self.log_buffer = []
@@ -144,11 +143,6 @@ class FeaturePage(ttk.Frame):
         ttk.Label(file_row, text="Input file:").pack(side="left")
         ttk.Entry(file_row, textvariable=self.input_file_var).pack(side="left", fill="x", expand=True, padx=6)
         ttk.Button(file_row, text="Browse", command=self._choose_file).pack(side="left")
-
-        manual_row = ttk.Frame(input_frame)
-        manual_row.pack(fill="x", pady=(0, 8))
-        ttk.Label(manual_row, text="Manual input:").pack(side="left")
-        ttk.Entry(manual_row, textvariable=self.manual_input_var).pack(side="left", fill="x", expand=True, padx=6)
 
         ttk.Button(input_frame, text="Run", command=self.run_feature).pack(anchor="e", pady=(8, 0))
 
