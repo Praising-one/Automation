@@ -8,6 +8,16 @@ from tkinter import filedialog, messagebox, ttk
 
 import pandas as pd
 
+try:
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    from matplotlib.figure import Figure
+
+    FEATURE_C_MPL_AVAILABLE = True
+except Exception:
+    FigureCanvasTkAgg = None
+    Figure = None
+    FEATURE_C_MPL_AVAILABLE = False
+
 
 class App(tk.Tk):
     def __init__(self):
@@ -105,6 +115,7 @@ class HomePage(ttk.Frame):
 
 class FeaturePage(ttk.Frame):
     FEATURE_C_PAGE_SIZE = 20
+    FEATURE_C_TABLE_PREVIEW_ROWS = 1000
 
     FEATURE_META = {
         "feature_a": "Feature A - CSV/TXT Net Pair View",
@@ -123,7 +134,11 @@ class FeaturePage(ttk.Frame):
         self.log_buffer = []
         self.result_tree = None
         self.feature_c_paste_text = None
-        self.feature_c_canvas = None
+        self.feature_c_plot_host = None
+        self.feature_c_mpl_figure = None
+        self.feature_c_mpl_canvas = None
+        self.feature_c_mpl_axes = None
+        self.feature_c_mpl_legend_axes = None
         self.feature_c_df = pd.DataFrame()
         self.feature_c_net_col = ""
         self.feature_c_x_col = ""
@@ -137,7 +152,6 @@ class FeaturePage(ttk.Frame):
         self.feature_c_highlight_pages = []
         self.feature_c_page_index = 0
         self.feature_c_page_label_var = tk.StringVar(value="Page 0/0")
-        self.feature_c_legend_canvas = None
         self.feature_c_prev_btn = None
         self.feature_c_next_btn = None
         self.feature_c_toggle_loaded_btn = None
@@ -205,14 +219,23 @@ class FeaturePage(ttk.Frame):
             plot_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=(0, 8))
             plot_frame.rowconfigure(0, weight=1)
             plot_frame.columnconfigure(0, weight=1)
-            plot_frame.columnconfigure(1, weight=0)
+            self.feature_c_plot_host = ttk.Frame(plot_frame)
+            self.feature_c_plot_host.grid(row=0, column=0, sticky="nsew")
 
-            self.feature_c_canvas = tk.Canvas(plot_frame, bg="white", highlightthickness=0)
-            self.feature_c_canvas.grid(row=0, column=0, sticky="nsew")
-            self.feature_c_canvas.bind("<Configure>", self._on_feature_c_canvas_resize)
-
-            self.feature_c_legend_canvas = tk.Canvas(plot_frame, width=240, bg="#fafafa", highlightthickness=1)
-            self.feature_c_legend_canvas.grid(row=0, column=1, sticky="ns", padx=(10, 0))
+            if FEATURE_C_MPL_AVAILABLE:
+                fig = Figure(figsize=(9.5, 5.4), dpi=100)
+                gs = fig.add_gridspec(1, 2, width_ratios=[4.6, 1.6], wspace=0.05)
+                self.feature_c_mpl_axes = fig.add_subplot(gs[0, 0])
+                self.feature_c_mpl_legend_axes = fig.add_subplot(gs[0, 1])
+                self.feature_c_mpl_legend_axes.axis("off")
+                self.feature_c_mpl_figure = fig
+                self.feature_c_mpl_canvas = FigureCanvasTkAgg(fig, master=self.feature_c_plot_host)
+                self.feature_c_mpl_canvas.get_tk_widget().pack(fill="both", expand=True)
+            else:
+                ttk.Label(
+                    self.feature_c_plot_host,
+                    text="matplotlib is not available. Install with:\npython -m pip install matplotlib",
+                ).pack(fill="both", expand=True, padx=8, pady=8)
 
             self.feature_c_loaded_frame = ttk.LabelFrame(main, text="Loaded Data", padding=10)
             self.feature_c_loaded_frame.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
@@ -271,16 +294,23 @@ class FeaturePage(ttk.Frame):
 
     def _show_result_dataframe(self, df: pd.DataFrame):
         self.result_tree.delete(*self.result_tree.get_children())
-        columns = list(df.columns)
+        show_df = df
+        if self.feature_key == "feature_c" and len(df) > self.FEATURE_C_TABLE_PREVIEW_ROWS:
+            show_df = df.head(self.FEATURE_C_TABLE_PREVIEW_ROWS).copy()
+            self._append_log(
+                f"[Feature C] Loaded Data preview: showing first {len(show_df):,} of {len(df):,} rows."
+            )
+
+        columns = list(show_df.columns)
         self.result_tree["columns"] = columns
         if not columns:
             return
 
-        for col in df.columns:
+        for col in show_df.columns:
             self.result_tree.heading(col, text=col)
             self.result_tree.column(col, width=140, anchor="w", stretch=True)
 
-        for row in df.astype(str).itertuples(index=False, name=None):
+        for row in show_df.astype(str).itertuples(index=False, name=None):
             self.result_tree.insert("", "end", values=row)
 
     def _choose_file(self):
@@ -564,7 +594,6 @@ class FeaturePage(ttk.Frame):
         self._show_result_dataframe(self.feature_c_df)
         self._update_feature_c_page_controls()
         self._draw_feature_c_ball_map()
-        self._draw_feature_c_legend()
 
         self._append_log(f"[Feature C] Loaded rows: {len(df):,}")
         self._append_log(f"[Feature C] Plotted points: {len(points):,}")
@@ -674,7 +703,6 @@ class FeaturePage(ttk.Frame):
         self.feature_c_color_by_net = self._build_feature_c_color_map(page_nets)
         self._update_feature_c_page_controls()
         self._draw_feature_c_ball_map()
-        self._draw_feature_c_legend()
 
     def _feature_c_next_page(self):
         if self.feature_c_page_index >= len(self.feature_c_highlight_pages) - 1:
@@ -684,12 +712,10 @@ class FeaturePage(ttk.Frame):
         self.feature_c_color_by_net = self._build_feature_c_color_map(page_nets)
         self._update_feature_c_page_controls()
         self._draw_feature_c_ball_map()
-        self._draw_feature_c_legend()
 
     def _on_feature_c_canvas_resize(self, _event):
         if self.feature_key == "feature_c" and self.feature_c_points:
             self._draw_feature_c_ball_map()
-            self._draw_feature_c_legend()
 
     def _toggle_feature_c_loaded_data(self):
         if self.feature_key != "feature_c" or self.feature_c_loaded_frame is None:
@@ -705,80 +731,60 @@ class FeaturePage(ttk.Frame):
                 self.feature_c_toggle_loaded_btn.configure(text="Show Loaded Data")
 
     def _draw_feature_c_ball_map(self):
-        if self.feature_c_canvas is None:
+        if not FEATURE_C_MPL_AVAILABLE:
+            return
+        if self.feature_c_mpl_axes is None or self.feature_c_mpl_canvas is None:
             return
 
-        canvas = self.feature_c_canvas
-        canvas.delete("all")
-        self.feature_c_item_to_net = {}
+        ax = self.feature_c_mpl_axes
+        ax.clear()
 
         if not self.feature_c_points:
-            canvas.create_text(20, 20, anchor="nw", text="Run to load a ball map file.", fill="#555555")
+            ax.text(0.02, 0.96, "Run to load a ball map file.", transform=ax.transAxes, va="top", color="#555555")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_facecolor("white")
+            self._draw_feature_c_legend()
+            self.feature_c_mpl_canvas.draw_idle()
             return
-
-        width = max(canvas.winfo_width(), 300)
-        height = max(canvas.winfo_height(), 240)
-        pad = 22
 
         xs = [p["x"] for p in self.feature_c_points]
         ys = [p["y"] for p in self.feature_c_points]
-        min_x, max_x = min(xs), max(xs)
-        min_y, max_y = min(ys), max(ys)
-
-        span_x = max(max_x - min_x, 1e-9)
-        span_y = max(max_y - min_y, 1e-9)
-        draw_w = max(width - 2 * pad, 10)
-        draw_h = max(height - 2 * pad, 10)
-
-        canvas.create_rectangle(pad, pad, width - pad, height - pad, outline="#cccccc")
-
+        color_values = []
         for point in self.feature_c_points:
-            px = pad + ((point["x"] - min_x) / span_x) * draw_w
-            py = height - pad - ((point["y"] - min_y) / span_y) * draw_h
-            r = 3
             if point["net_norm"] in self.feature_c_color_by_net:
-                color = self.feature_c_color_by_net[point["net_norm"]]
+                color_values.append(self.feature_c_color_by_net[point["net_norm"]])
             elif point["net_norm"] in self.feature_c_active_nets:
-                color = "#c7c7c7"
+                color_values.append("#c7c7c7")
             else:
-                color = "#8e8e8e"
-            item_id = canvas.create_oval(px - r, py - r, px + r, py + r, fill=color, outline="")
-            self.feature_c_item_to_net[item_id] = point["net_norm"]
+                color_values.append("#8e8e8e")
+
+        ax.scatter(xs, ys, c=color_values, s=7, marker="o", linewidths=0, rasterized=True)
+        ax.set_facecolor("white")
+        ax.set_xlabel(self.feature_c_x_col or "X")
+        ax.set_ylabel(self.feature_c_y_col or "Y")
+        ax.set_aspect("equal", adjustable="box")
+        ax.grid(False)
 
         total_pages = len(self.feature_c_highlight_pages)
         if total_pages > 0:
             page_text = f"Page {self.feature_c_page_index + 1}/{total_pages} | Nets on page: {len(self.feature_c_color_by_net)}"
         else:
             page_text = "Page 0/0 | Nets on page: 0"
-        canvas.create_text(
-            pad,
-            6,
-            anchor="nw",
-            text=f"Gray: normal | Light-gray: highlighted on other pages | Points: {len(self.feature_c_points):,} | {page_text}",
-            fill="#444444",
+        ax.set_title(
+            f"Gray: normal | Light-gray: highlighted on other pages | Points: {len(self.feature_c_points):,} | {page_text}",
+            fontsize=9,
         )
 
+        self._draw_feature_c_legend()
+        self.feature_c_mpl_canvas.draw_idle()
+
     def _draw_feature_c_legend(self):
-        if self.feature_c_legend_canvas is None:
+        if not FEATURE_C_MPL_AVAILABLE:
             return
-        canvas = self.feature_c_legend_canvas
-        canvas.delete("all")
-
-        width = max(canvas.winfo_width(), 220)
-        canvas.create_rectangle(0, 0, width, max(canvas.winfo_height(), 240), fill="#fafafa", outline="")
-        canvas.create_text(10, 10, anchor="nw", text="Legend (Current Page)", fill="#333333", font=("Malgun Gothic", 10, "bold"))
-
-        if not self.feature_c_color_by_net:
-            canvas.create_text(10, 34, anchor="nw", text="No highlighted nets.", fill="#666666")
+        if self.feature_c_mpl_legend_axes is None:
             return
-
-        y = 34
-        line_h = 18
-        for net_norm, color in self.feature_c_color_by_net.items():
-            display_name = self.feature_c_display_net_by_norm.get(net_norm, net_norm)
-            canvas.create_rectangle(10, y + 2, 22, y + 14, fill=color, outline="")
-            canvas.create_text(28, y, anchor="nw", text=display_name, fill="#222222")
-            y += line_h
+        self._draw_feature_c_legend_on_axes(self.feature_c_mpl_legend_axes)
 
     def _extract_feature_c_paste_nets(self):
         if self.feature_c_paste_text is None:
@@ -826,7 +832,6 @@ class FeaturePage(ttk.Frame):
         self.feature_c_color_by_net = self._build_feature_c_color_map(page_nets)
         self._update_feature_c_page_controls()
         self._draw_feature_c_ball_map()
-        self._draw_feature_c_legend()
 
         hit_points = sum(1 for p in self.feature_c_points if p["net_norm"] in self.feature_c_active_nets)
         requested_count = len({self._normalize_net(net) for net in pasted if str(net).strip()})
@@ -851,120 +856,101 @@ class FeaturePage(ttk.Frame):
             self.feature_c_paste_text.delete("1.0", "end")
         self._update_feature_c_page_controls()
         self._draw_feature_c_ball_map()
-        self._draw_feature_c_legend()
         self._append_log("[Feature C] Cleared highlights.")
 
     def _copy_feature_c_plot_image(self):
         if not self.feature_c_points:
             messagebox.showwarning("Copy failed", "Load ball map data first.")
             return
-        try:
-            image = self._render_feature_c_plot_image(width=2400, height=1600)
-        except RuntimeError as exc:
-            messagebox.showerror("Pillow required", f"{exc}\nInstall with:\npython -m pip install pillow")
+        if not FEATURE_C_MPL_AVAILABLE:
+            messagebox.showerror("matplotlib required", "Install with:\npython -m pip install matplotlib")
             return
-        self._copy_pil_image_to_clipboard(image, "plot")
+        temp_path = Path(tempfile.gettempdir()) / "feature_c_plot_hd.png"
+        self._save_feature_c_plot_png(temp_path, dpi=300)
+        self._copy_image_file_to_clipboard(temp_path, "plot")
 
     def _copy_feature_c_legend_image(self):
-        try:
-            image = self._render_feature_c_legend_image(width=1400, min_height=900)
-        except RuntimeError as exc:
-            messagebox.showerror("Pillow required", f"{exc}\nInstall with:\npython -m pip install pillow")
+        if not FEATURE_C_MPL_AVAILABLE:
+            messagebox.showerror("matplotlib required", "Install with:\npython -m pip install matplotlib")
             return
-        self._copy_pil_image_to_clipboard(image, "legend")
+        temp_path = Path(tempfile.gettempdir()) / "feature_c_legend_hd.png"
+        self._save_feature_c_legend_png(temp_path, dpi=300)
+        self._copy_image_file_to_clipboard(temp_path, "legend")
 
-    def _render_feature_c_plot_image(self, width=2400, height=1600):
-        try:
-            from PIL import Image, ImageDraw
-        except ImportError as exc:
-            raise RuntimeError("Pillow is required for HD image copy.") from exc
-
-        image = Image.new("RGB", (width, height), "white")
-        draw = ImageDraw.Draw(image)
+    def _save_feature_c_plot_png(self, output_path: Path, dpi=300):
+        fig = Figure(figsize=(12, 8), dpi=100)
+        gs = fig.add_gridspec(1, 2, width_ratios=[4.6, 1.6], wspace=0.05)
+        ax = fig.add_subplot(gs[0, 0])
+        legend_ax = fig.add_subplot(gs[0, 1])
+        legend_ax.axis("off")
 
         if not self.feature_c_points:
-            draw.text((24, 24), "Run to load a ball map file.", fill="#555555")
-            return image
+            ax.text(0.02, 0.96, "Run to load a ball map file.", transform=ax.transAxes, va="top", color="#555555")
+            ax.set_xticks([])
+            ax.set_yticks([])
+        else:
+            xs = [p["x"] for p in self.feature_c_points]
+            ys = [p["y"] for p in self.feature_c_points]
+            color_values = []
+            for point in self.feature_c_points:
+                if point["net_norm"] in self.feature_c_color_by_net:
+                    color_values.append(self.feature_c_color_by_net[point["net_norm"]])
+                elif point["net_norm"] in self.feature_c_active_nets:
+                    color_values.append("#c7c7c7")
+                else:
+                    color_values.append("#8e8e8e")
+            ax.scatter(xs, ys, c=color_values, s=8, marker="o", linewidths=0, rasterized=True)
+            ax.set_xlabel(self.feature_c_x_col or "X")
+            ax.set_ylabel(self.feature_c_y_col or "Y")
+            ax.set_aspect("equal", adjustable="box")
 
-        pad = 72
-        xs = [p["x"] for p in self.feature_c_points]
-        ys = [p["y"] for p in self.feature_c_points]
-        min_x, max_x = min(xs), max(xs)
-        min_y, max_y = min(ys), max(ys)
-        span_x = max(max_x - min_x, 1e-9)
-        span_y = max(max_y - min_y, 1e-9)
-        draw_w = max(width - 2 * pad, 10)
-        draw_h = max(height - 2 * pad, 10)
-
-        draw.rectangle((pad, pad, width - pad, height - pad), outline="#cccccc", width=2)
-
-        radius = 8
-        for point in self.feature_c_points:
-            px = pad + ((point["x"] - min_x) / span_x) * draw_w
-            py = height - pad - ((point["y"] - min_y) / span_y) * draw_h
-            if point["net_norm"] in self.feature_c_color_by_net:
-                color = self.feature_c_color_by_net[point["net_norm"]]
-            elif point["net_norm"] in self.feature_c_active_nets:
-                color = "#c7c7c7"
-            else:
-                color = "#8e8e8e"
-            draw.ellipse((px - radius, py - radius, px + radius, py + radius), fill=color)
-
+        self._draw_feature_c_legend_on_axes(legend_ax)
         total_pages = len(self.feature_c_highlight_pages)
         if total_pages > 0:
             page_text = f"Page {self.feature_c_page_index + 1}/{total_pages} | Nets on page: {len(self.feature_c_color_by_net)}"
         else:
             page_text = "Page 0/0 | Nets on page: 0"
-        title_text = (
-            f"Gray: normal | Light-gray: highlighted on other pages | Points: {len(self.feature_c_points):,} | {page_text}"
+        ax.set_title(
+            f"Gray: normal | Light-gray: highlighted on other pages | Points: {len(self.feature_c_points):,} | {page_text}",
+            fontsize=10,
         )
-        draw.text((pad, 16), title_text, fill="#444444")
-        return image
+        fig.savefig(output_path, dpi=dpi, facecolor="white", bbox_inches="tight")
 
-    def _render_feature_c_legend_image(self, width=1400, min_height=900):
-        try:
-            from PIL import Image, ImageDraw
-        except ImportError as exc:
-            raise RuntimeError("Pillow is required for HD image copy.") from exc
+    def _save_feature_c_legend_png(self, output_path: Path, dpi=300):
+        fig = Figure(figsize=(6, 8), dpi=100)
+        ax = fig.add_subplot(111)
+        self._draw_feature_c_legend_on_axes(ax)
+        fig.savefig(output_path, dpi=dpi, facecolor="#fafafa", bbox_inches="tight")
 
-        row_h = 32
-        content_h = 64 + max(len(self.feature_c_color_by_net), 1) * row_h + 20
-        height = max(min_height, content_h)
-        image = Image.new("RGB", (width, height), "#fafafa")
-        draw = ImageDraw.Draw(image)
+    def _draw_feature_c_legend_on_axes(self, ax):
+        from matplotlib.patches import Rectangle
 
-        draw.text((18, 14), "Legend (Current Page)", fill="#333333")
+        ax.clear()
+        ax.axis("off")
+        ax.set_facecolor("#fafafa")
+        ax.text(0.02, 0.98, "Legend (Current Page)", transform=ax.transAxes, va="top", fontsize=9, color="#333333")
         if not self.feature_c_color_by_net:
-            draw.text((18, 52), "No highlighted nets.", fill="#666666")
-            return image
-
-        y = 56
+            ax.text(0.02, 0.90, "No highlighted nets.", transform=ax.transAxes, va="top", color="#666666")
+            return
+        y = 0.90
+        line_h = 0.042
         for net_norm, color in self.feature_c_color_by_net.items():
             display_name = self.feature_c_display_net_by_norm.get(net_norm, net_norm)
-            draw.rectangle((18, y + 4, 40, y + 24), fill=color)
-            draw.text((48, y + 4), display_name, fill="#222222")
-            y += row_h
-        return image
+            ax.add_patch(Rectangle((0.02, y - 0.02), 0.06, 0.022, transform=ax.transAxes, color=color, clip_on=False))
+            ax.text(0.10, y - 0.002, display_name, transform=ax.transAxes, va="center", fontsize=8, color="#222222")
+            y -= line_h
+            if y < 0.02:
+                break
 
-    def _copy_pil_image_to_clipboard(self, image, image_tag: str):
+    def _copy_image_file_to_clipboard(self, image_path: Path, image_tag: str):
         try:
-            from PIL import Image
-            if not isinstance(image, Image.Image):
-                raise TypeError("image must be PIL.Image.Image")
-        except ImportError:
-            messagebox.showerror(
-                "Pillow required",
-                "Image copy needs Pillow.\nInstall with:\npython -m pip install pillow",
-            )
-            return
-
-        temp_path = Path(tempfile.gettempdir()) / f"feature_c_{image_tag}_hd.png"
-        try:
-            image.save(temp_path, "PNG")
+            if not image_path.exists():
+                raise FileNotFoundError(str(image_path))
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
             return
-        ps_path = str(temp_path).replace("'", "''")
+
+        ps_path = str(image_path).replace("'", "''")
         ps_script = (
             f"$path = '{ps_path}'; "
             "Add-Type -AssemblyName System.Windows.Forms; "
@@ -983,7 +969,7 @@ class FeaturePage(ttk.Frame):
             self._append_log(f"[Feature C] Clipboard copy failed: {proc.stderr.strip()}")
             messagebox.showerror(
                 "Clipboard failed",
-                f"Could not copy image to clipboard.\nSaved file:\n{temp_path}",
+                f"Could not copy image to clipboard.\nSaved file:\n{image_path}",
             )
             return
 
